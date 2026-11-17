@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Days until TED-AI</title>
+<style>
+  :root { --bg:#0b0c0e; --ink:#f3f1ea; --dim:#8d8a80; --line:#26272b; --accent:#e8a33d; }
+  * { box-sizing:border-box; margin:0; }
+  html, body { height:100%; background:var(--bg); color:var(--ink); overflow:hidden; cursor:none;
+    font-family:"Helvetica Neue", Helvetica, Arial, sans-serif; }
+  body { display:flex; flex-direction:column; padding:5vmin 6vmin; }
+  .label { font-size:3vmin; letter-spacing:.28em; text-transform:uppercase; color:var(--dim); }
+  .label b { color:var(--accent); font-weight:600; }
+  main { flex:1; display:flex; flex-direction:column; justify-content:center; }
+  #days { font-size:38vmin; font-weight:700; line-height:.9; letter-spacing:-.03em;
+    font-variant-numeric:tabular-nums; margin-left:-.04em; }
+  .sub { display:flex; align-items:baseline; gap:4vmin; margin-top:3vmin; flex-wrap:wrap; }
+  #clock { font-size:6vmin; font-variant-numeric:tabular-nums; color:var(--accent); font-weight:300; }
+  #target { font-size:3.4vmin; color:var(--dim); }
+  #people { display:flex; gap:5vmin; border-top:1px solid var(--line); padding-top:3vmin; flex-wrap:wrap; }
+  .p .n { font-size:2vmin; letter-spacing:.2em; text-transform:uppercase; color:var(--dim); }
+  .p .m { font-size:3.2vmin; margin-top:.6vmin; }
+  .p .d { font-size:2.2vmin; color:var(--dim); font-variant-numeric:tabular-nums; margin-top:.3vmin; }
+  footer { display:flex; justify-content:space-between; gap:4vmin; margin-top:3vmin;
+    font-size:1.7vmin; color:var(--dim); }
+  #notice { color:var(--accent); }
+</style>
+</head>
+<body>
+  <div class="label" id="label">Days until <b>TED-AI</b></div>
+  <main>
+    <div id="days">–</div>
+    <div class="sub"><div id="clock"></div><div id="target"></div></div>
+  </main>
+  <div id="people"></div>
+  <footer><div id="source"></div><div id="notice"></div><div id="status"></div></footer>
+
+<script>
+// Counts down to the mean of the AI Futures Project authors' median TED-AI
+// dates. Each median is published to the month, so it is placed mid-month.
+var DAY = 86400000, data = null, pageVersion = null, lastOk = 0;
+var MON = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+function $(id) { return document.getElementById(id); }
+function when(month) { var p = month.split("-"); return Date.UTC(+p[0], +p[1] - 1, 15, 12); }
+function pad(n) { return (n < 10 ? "0" : "") + n; }
+function commas(n) { return String(n).replace(/\B(?=(\d{3})+$)/g, ","); }
+
+function renderStatic() {
+  var ms = data.medians.slice().sort(function (a, b) { return when(a.month) - when(b.month); });
+  var now = Date.now();
+  $("people").innerHTML = ms.map(function (m) {
+    var p = m.month.split("-"), d = Math.round((when(m.month) - now) / DAY);
+    return '<div class="p"><div class="n">' + m.name + '</div><div class="m">' + MON[+p[1] - 1] + " " + p[0] +
+      '</div><div class="d">' + (d >= 0 ? commas(d) + " days" : commas(-d) + " days ago") + "</div></div>";
+  }).join("");
+  var sd = new Date(data.source_date);
+  $("source").textContent = "Mean of " + ms.length + " median forecasts · AI Futures Project, " +
+    MON[sd.getUTCMonth()] + " " + sd.getUTCDate() + ", " + sd.getUTCFullYear() + " · assumes no deliberate slowdown";
+  $("notice").textContent = data.notice || "";
+}
+
+function tick() {
+  if (!data) return;
+  var sum = 0;
+  data.medians.forEach(function (m) { sum += when(m.month); });
+  var target = sum / data.medians.length, left = target - Date.now(), past = left < 0, a = Math.abs(left);
+  $("label").innerHTML = (past ? "Days since " : "Days until ") + "<b>TED-AI</b>";
+  $("days").textContent = commas(Math.floor(a / DAY));
+  $("clock").textContent = pad(Math.floor(a % DAY / 3600000)) + ":" + pad(Math.floor(a % 3600000 / 60000)) +
+    ":" + pad(Math.floor(a % 60000 / 1000));
+  var t = new Date(target);
+  $("target").textContent = "average of median forecasts: " + MON[t.getUTCMonth()] + " " + t.getUTCDate() + ", " + t.getUTCFullYear();
+  $("status").textContent = Date.now() - lastOk > 30 * 60000 ? "offline · showing last known forecasts" : "";
+}
+
+function refresh() {
+  var x = new XMLHttpRequest();
+  x.open("GET", "forecasts.json?" + Date.now());
+  x.onload = function () {
+    if (x.status !== 200) return;
+    var d = JSON.parse(x.responseText);
+    if (pageVersion !== null && d.page_version !== pageVersion) { location.reload(); return; }
+    pageVersion = d.page_version; data = d; lastOk = Date.now();
+    try { localStorage.setItem("forecasts", x.responseText); } catch (e) {}
+    renderStatic(); tick();
+  };
+  x.send();
+}
+
+// Start from the last copy seen so a restart with the server down still shows a countdown.
+try { data = JSON.parse(localStorage.getItem("forecasts")); } catch (e) {}
+if (data) { renderStatic(); tick(); }
+refresh();
+setInterval(tick, 1000);
+setInterval(refresh, 5 * 60000);
+setInterval(function () { if (data) renderStatic(); }, 3600000);
+</script>
+</body>
+</html>
