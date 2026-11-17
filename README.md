@@ -45,6 +45,7 @@ To set forecasts by hand, edit `medians` (and `source_date`) in the state file; 
 ## Settings that matter
 
 - The screen must be on the same network as this Mac, and the Mac must be awake for forecast updates (the page keeps counting without it).
+- The screen is an Insignia 32" FE Series Fire TV (ordered 2026-11-17). Setup, not yet tried on the device: open the Silk browser, go to `http://Elis-MacBook-Pro-2.local:8805` (or the Mac's IP if `.local` does not resolve), bookmark it, and set Settings > Display & Sounds > Screensaver to Never. The sleep timer has no menu setting; over adb, `settings put secure sleep_timeout 0` is reported to disable it on some models.
 - macOS may ask once to allow Python to accept incoming connections; allow it.
 
 ## Gotchas learned
