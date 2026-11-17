@@ -1,0 +1,42 @@
+# Checks the AI Futures Project feed and redeploys the countdown to GitHub Pages.
+# Runs on every push and every 6 hours, so the screen needs no computer at home.
+name: publish
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+concurrency:
+  group: pages
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 server.py --publish _site
+      - name: Commit changed forecasts
+        run: |
+          git config user.name "ted-ai-countdown bot"
+          git config user.email "actions@users.noreply.github.com"
+          # GitHub switches off scheduled workflows after 60 days without a commit,
+          # and forecasts change less often than that, so touch a file monthly.
+          if [ $(( $(date +%s) - $(git log -1 --format=%ct) )) -gt 2592000 ]; then
+            date -u +%F > keepalive
+            git add keepalive
+          fi
+          git add web/forecasts.json
+          git diff --cached --quiet || { git commit -m "Update forecasts from feed"; git push; }
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - id: deploy
+        uses: actions/deploy-pages@v4

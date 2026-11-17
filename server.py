@@ -3,11 +3,16 @@
 AI Futures Project authors' median forecasts for Top-Expert-Dominating AI, and
 keeps those forecasts current by checking the project's blog feed.
 
-Runs under launchd as com.elityre.ted-ai-countdown on port 8805.
-State:  ~/Library/Application Support/TedAiCountdown/forecasts.json
-Log:    ~/Library/Logs/ted-ai-countdown.log
-Usage:  server.py          serve the page and check the feed every 6 hours
-        server.py --test   fetch and parse the feed once, print, change nothing
+The screen normally loads the hosted copy: a GitHub Actions workflow runs
+`--publish` every 6 hours and deploys the result to GitHub Pages, so nothing
+depends on this Mac. The local server is for previewing changes.
+
+Usage:  server.py                 local preview on port 8805, checks the feed every 6 hours
+        server.py --publish DIR   check the feed, update web/forecasts.json if the
+                                  forecasts changed, write the deployable site to DIR
+        server.py --test          fetch and parse the feed once, print, change nothing
+Local state: ~/Library/Application Support/TedAiCountdown/forecasts.json
+Local log:   ~/Library/Logs/ted-ai-countdown.log (launchd agent com.elityre.ted-ai-countdown)
 """
 import functools
 import html
@@ -15,16 +20,18 @@ import http.server
 import json
 import os
 import re
+import shutil
 import sys
 import threading
 import time
 import urllib.request
+import zlib
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 WEB = os.path.join(HERE, "web")
-SEED = os.path.join(HERE, "forecasts.seed.json")
+SEED = os.path.join(WEB, "forecasts.json")  # committed forecasts; the hosted site's state
 STATE_DIR = os.path.expanduser("~/Library/Application Support/TedAiCountdown")
 STATE = os.path.join(STATE_DIR, "forecasts.json")
 FEED = "https://blog.aifutures.org/feed"
@@ -105,8 +112,14 @@ def save_state(state):
     os.replace(tmp, STATE)
 
 
-def check_once():
-    state = load_state()
+def page_version():
+    # The page reloads itself when this changes, so edits reach the screen untouched.
+    with open(os.path.join(WEB, "index.html"), "rb") as f:
+        return zlib.crc32(f.read())
+
+
+def apply_feed(state):
+    """Fetch the feed and fold anything newer into state."""
     forecast, newest = parse_feed(fetch_feed())
     if forecast and forecast["source_date"] > state["source_date"]:
         log("new forecasts from %s: %s" % (forecast["source_url"], forecast["medians"]))
@@ -119,8 +132,34 @@ def check_once():
     else:
         state["notice"] = ""
     state["checked_at"] = datetime.now(timezone.utc).isoformat()
-    save_state(state)
     log("checked feed; source is %s (%d medians)" % (state["source_url"], len(state["medians"])))
+
+
+def check_once():
+    state = load_state()
+    apply_feed(state)
+    save_state(state)
+
+
+def publish(out):
+    """Build the static site for GitHub Pages. A failed feed check still
+    publishes the last committed forecasts, so the screen never goes blank."""
+    with open(SEED) as f:
+        state = json.load(f)
+    before = json.dumps(state, sort_keys=True)
+    try:
+        apply_feed(state)
+    except Exception as e:
+        log("ERROR feed check failed, publishing last known forecasts: %r" % (e,))
+    checked = state.pop("checked_at", "")
+    if json.dumps(state, sort_keys=True) != before:
+        with open(SEED, "w") as f:  # the workflow commits this file when it changes
+            json.dump(state, f, indent=2)
+            f.write("\n")
+    shutil.copytree(WEB, out, dirs_exist_ok=True)
+    with open(os.path.join(out, "forecasts.json"), "w") as f:
+        json.dump(dict(state, checked_at=checked, page_version=page_version()), f)
+    log("wrote site to %s" % out)
 
 
 def check_loop():
@@ -137,8 +176,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if self.path.split("?")[0] != "/forecasts.json":
             return super().do_GET()
         state = load_state()
-        # The page reloads itself when this changes, so edits reach the screen untouched.
-        state["page_version"] = int(os.path.getmtime(os.path.join(WEB, "index.html")))
+        state["page_version"] = page_version()
         body = json.dumps(state).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
@@ -160,6 +198,9 @@ def main():
         forecast, newest = parse_feed(fetch_feed())
         print(json.dumps({"parsed": forecast, "newest_timelines_post": newest}, indent=2))
         sys.exit(0 if forecast else 1)
+    if "--publish" in sys.argv:
+        publish(sys.argv[sys.argv.index("--publish") + 1])
+        return
     threading.Thread(target=check_loop, daemon=True).start()
     server = http.server.ThreadingHTTPServer(("0.0.0.0", PORT), functools.partial(Handler, directory=WEB))
     log("serving on port %d" % PORT)
